@@ -26,7 +26,7 @@ cp -r xlayer-expert ~/.claude/skills/
 Or clone this repo directly:
 
 ```bash
-git clone https://github.com/<your-username>/xlayer-expert-skill.git ~/.claude/skills/xlayer-expert
+git clone https://github.com/cberktavsan/xlayer-expert.git ~/.claude/skills/xlayer-expert
 ```
 
 ## File structure
@@ -37,7 +37,7 @@ xlayer-expert/
 ├── LICENSE                         # MIT License
 ├── README.md                       # This file
 ├── assets/
-│   └── xlayer-architecture.png     # Architecture diagram
+│   └── x-layer.png                 # X Layer logo
 └── references/
     ├── security.md                 # Solidity security rules, L2 risks, attack patterns
     ├── network-config.md           # RPC URLs, chain IDs, performance specs
