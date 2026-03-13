@@ -78,6 +78,12 @@ Every Solidity code block written with this skill is checked against 18 Golden R
 - Oracle integration (staleness checks, TWAP)
 - On-chain data privacy (`private` != secret)
 
+## Support
+
+If you find this skill useful, consider supporting the project:
+
+**EVM Wallet:** `0x1dfcf2ac670738e74fb17c2c96da5bf333a3542c`
+
 ## License
 
 MIT — see [LICENSE](LICENSE) for details.
