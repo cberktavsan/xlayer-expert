@@ -1,10 +1,12 @@
 # X Layer Expert Skill
 
-A Claude Code skill that provides deep expertise for building on [X Layer](https://www.okx.com/xlayer) — OKX's Layer 2 blockchain built on OP Stack.
+An AI coding assistant skill that provides deep expertise for building on [X Layer](https://www.okx.com/xlayer) — OKX's Layer 2 blockchain built on OP Stack.
+
+Works with **Claude Code**, **Cursor**, **Windsurf**, **Codex CLI**, **Gemini CLI**, and any AI coding tool that supports markdown-based context files.
 
 ## What it does
 
-When triggered, this skill gives Claude Code specialized knowledge about:
+When triggered, this skill gives your AI coding assistant specialized knowledge about:
 
 - **Network configuration** — RPC endpoints, chain IDs (196 mainnet / 1952 testnet), re-genesis block
 - **Smart contract security** — 18 Golden Rules covering reentrancy, L2-specific risks, signature replay, oracle safety, and more
@@ -17,17 +19,41 @@ When triggered, this skill gives Claude Code specialized knowledge about:
 
 ## Installation
 
-Copy the skill directory into your Claude Code skills folder:
+### Claude Code
 
 ```bash
+# Copy into skills folder
 cp -r xlayer-expert ~/.claude/skills/
-```
 
-Or clone this repo directly:
-
-```bash
+# Or clone directly
 git clone https://github.com/cberktavsan/xlayer-expert.git ~/.claude/skills/xlayer-expert
 ```
+
+### Cursor / Windsurf
+
+Copy `SKILL.md` and `references/` into your project root, or add them to the tool's context:
+
+```bash
+# Add to your project as context
+cp SKILL.md your-project/.cursorrules
+# Or reference the files via Cursor Settings → Rules
+```
+
+### Codex CLI / Gemini CLI
+
+Include the reference files as context when starting a session:
+
+```bash
+# Codex CLI — add to project instructions
+cp SKILL.md your-project/AGENTS.md
+
+# Gemini CLI — add to project instructions
+cp SKILL.md your-project/GEMINI.md
+```
+
+### Any AI Coding Tool
+
+The skill is plain markdown. Copy `SKILL.md` + `references/` into wherever your tool reads context files from.
 
 ## File structure
 
@@ -54,7 +80,7 @@ xlayer-expert/
 
 ## How it triggers
 
-The skill activates automatically when your code or conversation involves:
+In Claude Code, the skill activates automatically via triggers. For other tools, the context is available as soon as you include the files. Common trigger patterns:
 
 | Trigger | Examples |
 |---------|----------|
