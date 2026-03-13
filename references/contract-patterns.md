@@ -8,7 +8,7 @@ import "@nomicfoundation/hardhat-toolbox";
 import '@okxweb3/hardhat-explorer-verify';
 
 const config: HardhatUserConfig = {
-  solidity: "0.8.24",
+  solidity: "0.8.34",
   paths: { sources: "./contracts" },
   networks: {
     "xlayer-testnet": {
@@ -69,7 +69,7 @@ Testnet (chainId 1952 — see `network-config.md` for chainId notes):
 src = "contracts"
 out = "out"
 libs = ["node_modules"]
-solc_version = "0.8.24"
+solc_version = "0.8.34"
 optimizer = true
 optimizer_runs = 200
 evm_version = "cancun"
@@ -140,11 +140,57 @@ Upgradeable contracts in an inheritance chain must reserve storage slots to prev
 contract MyContractV1 is UUPSUpgradeable, OwnableUpgradeable {
     uint256 public value;
 
-    // Reserve 50 storage slots for future variables in this contract
-    uint256[49] private __gap;  // 49 because `value` uses 1 slot
+    // Reserve 49 storage slots for future variables (value uses 1 slot, total = 50)
+    uint256[49] private __gap;
 }
 ```
 Without `__gap`, adding variables to a base contract shifts storage in child contracts, corrupting data.
+
+### Solidity Compiler Warning
+> **TSTORE Poison Bug:** Solidity 0.8.28–0.8.33 have a critical bug in the IR (Yul) pipeline that corrupts transient storage cleanup (`TSTORE`/`TLOAD`). **Use 0.8.34+** which fixes this bug. Do not use `via_ir = true` with any version in the 0.8.28–0.8.33 range.
+
+### ERC-7201 Namespaced Storage (Recommended)
+OpenZeppelin v5 best practice for proxy/upgrade safety. Replaces error-prone `__gap` arrays with deterministic storage locations:
+```solidity
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+
+contract MyContractV1 is UUPSUpgradeable {
+    /// @custom:storage-location erc7201:myproject.storage.MyContract
+    struct MyContractStorage {
+        uint256 value;
+        mapping(address => uint256) balances;
+    }
+
+    // keccak256(abi.encode(uint256(keccak256("myproject.storage.MyContract")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant STORAGE_LOCATION =
+        0x...; // Compute with: cast keccak "myproject.storage.MyContract"
+
+    function _getStorage() private pure returns (MyContractStorage storage $) {
+        assembly { $.slot := STORAGE_LOCATION }
+    }
+
+    function getValue() public view returns (uint256) {
+        return _getStorage().value;
+    }
+}
+```
+**Why ERC-7201 over `__gap`:**
+- No risk of miscounting gap size
+- Storage slots are deterministic — no collision between contracts in inheritance chain
+- OpenZeppelin `@custom:storage-location` annotation enables automated tooling verification
+- Works alongside existing `__gap` patterns if migrating incrementally
+
+### Import Path: `contracts` vs `contracts-upgradeable`
+- **Non-proxy contracts:** Use `@openzeppelin/contracts/...` (standard library)
+- **Proxy/upgradeable contracts:** Use `@openzeppelin/contracts-upgradeable/...` (initializable variants)
+- Mixing them causes subtle bugs: standard contracts have constructors that don't run behind proxies
+```solidity
+// ❌ Wrong: standard Ownable in an upgradeable contract — constructor won't run
+import "@openzeppelin/contracts/access/Ownable.sol";
+
+// ✅ Correct: upgradeable variant with initializer
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+```
 
 ### Critical Rules
 - `constructor` must always call `_disableInitializers()`
@@ -168,7 +214,7 @@ Without `__gap`, adding variables to a base contract shifts storage in child con
 ```solidity
 // contracts/MyNFT.sol
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.34;
 
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
@@ -230,3 +276,38 @@ main().catch(console.error);
 ```bash
 npx hardhat okverify --network xlayer-mainnet <NFT_CONTRACT_ADDRESS>
 ```
+
+---
+
+## Permit2 Approval Pattern
+
+Uniswap's [Permit2](https://github.com/Uniswap/permit2) provides a unified, safer token approval mechanism:
+```solidity
+import {IPermit2} from "permit2/src/interfaces/IPermit2.sol";
+import {ISignatureTransfer} from "permit2/src/interfaces/ISignatureTransfer.sol";
+
+contract MyDEX {
+    IPermit2 public immutable permit2;
+
+    constructor(IPermit2 _permit2) {
+        permit2 = _permit2;
+    }
+
+    function swapWithPermit(
+        ISignatureTransfer.PermitTransferFrom calldata permit,
+        ISignatureTransfer.SignatureTransferDetails calldata transferDetails,
+        bytes calldata signature
+    ) external {
+        // Single approve to Permit2, then Permit2 handles per-tx transfers
+        permit2.permitTransferFrom(permit, transferDetails, msg.sender, signature);
+        // ... execute swap logic
+    }
+}
+```
+**Advantages over raw `approve()`:**
+- Users approve Permit2 once; individual dApps get per-transaction, expiring, amount-bounded permissions via signatures
+- Eliminates the approve race condition (ERC20 front-running)
+- Built-in nonce and deadline enforcement
+- Batch permits for multi-token operations
+
+**Permit2 on X Layer:** Canonical Permit2 address is `0x000000000022D473030F116dDEE9F6B43aC78BA3` (deterministic CREATE2 — same on all EVM chains). Verify deployment: call `eth_getCode` at this address. If empty (not deployed), deploy from [github.com/Uniswap/permit2](https://github.com/Uniswap/permit2) using the canonical CREATE2 deployer.

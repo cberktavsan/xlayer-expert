@@ -19,6 +19,12 @@ When triggered, this skill gives your AI coding assistant specialized knowledge 
 
 ## Installation
 
+### Quick Install (via [skills.sh](https://skills.sh))
+
+```bash
+npx skills add berktavsan/xlayer-expert
+```
+
 ### Claude Code
 
 ```bash

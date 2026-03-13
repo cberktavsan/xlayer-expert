@@ -72,7 +72,7 @@ For `foundry.toml` config, see `contract-patterns.md` → Foundry Config section
 ### Foundry Test Cheatcodes
 ```solidity
 // test/MyContract.t.sol
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.34;
 import "forge-std/Test.sol";
 import "../contracts/MyContract.sol";
 
@@ -118,7 +118,7 @@ contract MyContractTest is Test {
 ### Foundry Deploy Script
 ```solidity
 // script/Deploy.s.sol
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.34;
 import "forge-std/Script.sol";
 import "../contracts/MyContract.sol";
 

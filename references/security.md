@@ -15,8 +15,8 @@ function withdraw(uint256 amount) external {
 
 // ❌ Wrong: Interaction before Effect — reentrancy vulnerability
 function withdraw(uint256 amount) external {
-    require(balances[msg.sender] >= amount);
-    (bool ok, ) = msg.sender.call{value: amount}("");
+    require(balances[msg.sender] >= amount, "Insufficient");
+    (bool ok, ) = msg.sender.call{value: amount}("");  // External call BEFORE state update!
     balances[msg.sender] -= amount;
 }
 ```
@@ -33,6 +33,22 @@ contract Bridge is ReentrancyGuard {
 }
 ```
 
+#### Transient Storage Reentrancy (EIP-1153)
+> **Warning:** With EIP-1153 (transient storage), the 2300 gas stipend from `transfer()`/`send()` is NO longer a reentrancy barrier. `TSTORE`/`TLOAD` cost only 100 gas each, making reentrancy possible even within 2300 gas. (Source: ChainSecurity, 2025)
+
+For new contracts, prefer `ReentrancyGuardTransient` (OpenZeppelin v5.1+) which uses transient storage for cheaper reentrancy protection:
+```solidity
+// Gas-efficient reentrancy guard using transient storage (EIP-1153)
+import "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
+
+contract MyContract is ReentrancyGuardTransient {
+    function withdraw(uint256 amount) external nonReentrant {
+        // TSTORE-based lock — cheaper than SSTORE, auto-clears at tx end
+    }
+}
+```
+**Key difference:** Classic `ReentrancyGuard` uses `SSTORE` (~5000 gas). `ReentrancyGuardTransient` uses `TSTORE` (~100 gas) and auto-resets at transaction end — no need to reset the lock manually.
+
 ### Authentication
 - NEVER use `tx.origin` for authentication — always use `msg.sender`
 - `tx.origin` is only acceptable for checking "is the caller an EOA?"
@@ -44,10 +60,59 @@ require(tx.origin == owner);
 require(msg.sender == owner);
 ```
 
+#### EIP-7702 Delegated Execution Security
+> **Critical (Pectra upgrade, 2025):** EIP-7702 allows EOAs to delegate execution to a contract via `SET_CODE_TX_TYPE (0x04)`. Phishing attacks using EIP-7702 are already occurring on Ethereum mainnet. X Layer cross-chain users are at risk.
+
+**Threats:**
+- Attacker tricks user into signing a delegation that transfers their assets
+- Delegated code can bypass `tx.origin == msg.sender` EOA checks
+- Nonce manipulation via delegated execution
+
+**Protections:**
+```solidity
+// ❌ No longer safe as sole EOA check (EIP-7702 breaks this assumption)
+require(tx.origin == msg.sender, "Not EOA");
+
+// ✅ Additional validation for EIP-7702 awareness
+function _validateCaller() internal view {
+    require(msg.sender == tx.origin, "Not EOA");
+    // If your contract handles delegated calls, also validate:
+    require(msg.value == 0 || msg.value == expectedValue, "Unexpected value");
+    // Check nonce consistency if implementing meta-tx
+}
+```
+- Validate `nonce`, `gas`, and `value` in all signature-verified operations
+- Never trust `tx.origin` alone — always combine with `msg.sender` checks and application-level authorization
+- Warn users about blind-signing risks in your dApp UI
+
 ### Access Control
 - Simple ownership: OpenZeppelin `Ownable2Step` (2-step transfer, prevents accidental loss)
 - Role-based: OpenZeppelin `AccessControl` or `AccessControlEnumerable`
 - Critical functions: `onlyOwner` + `timelock` combination
+
+#### Role Separation Best Practices (OWASP 2025 #1)
+Access control is the #1 vulnerability category (OWASP Smart Contract Top 10, 2025). Apply defense-in-depth:
+```solidity
+import "@openzeppelin/contracts/access/AccessControlEnumerable.sol";
+
+contract Treasury is AccessControlEnumerable {
+    bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
+    bytes32 public constant GUARDIAN_ROLE = keccak256("GUARDIAN_ROLE");
+
+    // Separate roles: operator can execute, guardian can pause/cancel
+    function executeTransfer(address to, uint256 amount) external onlyRole(OPERATOR_ROLE) {
+        // ...
+    }
+
+    function emergencyPause() external onlyRole(GUARDIAN_ROLE) {
+        _pause();
+    }
+}
+```
+- **Enumerate roles:** Use `AccessControlEnumerable` to audit who has which role
+- **Timelock critical operations:** Admin functions (upgrade, large transfers) should go through `TimelockController`
+- **Multi-sig for admin:** Never use a single EOA for `DEFAULT_ADMIN_ROLE` in production
+- **Revoke default admin:** After setup, consider renouncing `DEFAULT_ADMIN_ROLE` from deployer and transferring to a timelock/multisig
 
 ### Integer Overflow/Underflow
 - Solidity 0.8+ has automatic checks
@@ -60,10 +125,29 @@ for (uint256 i = 0; i < arr.length;) {
 }
 ```
 
+#### Downcast Safety
+Solidity 0.8+ checks arithmetic overflow/underflow, but **downcasting silently truncates** without reverting:
+```solidity
+// ❌ VULNERABLE: silently truncates — no revert on overflow
+uint256 big = type(uint256).max;
+uint128 small = uint128(big); // Silently truncated to type(uint128).max
+
+// ✅ Safe: use OpenZeppelin SafeCast — reverts on overflow
+import "@openzeppelin/contracts/utils/math/SafeCast.sol";
+using SafeCast for uint256;
+uint128 safe = big.toUint128(); // Reverts: "SafeCast: value doesn't fit in 128 bits"
+```
+
 ### Front-running Protection
 - Commit-reveal pattern: first commit hash, then reveal value
 - Private mempool: via Flashblocks or dedicated RPC
 - Time-based nonce or deadline parameters
+
+#### MEV on X Layer
+- **Single sequencer (OKX):** No public mempool MEV like Ethereum — users cannot run MEV bots targeting the mempool
+- **Flashblocks:** Create a ~200ms visibility window before finalization — see `flashblocks.md` for reorg risks
+- **Sequencer ordering:** The sequencer determines transaction ordering; no PBS (proposer-builder separation) yet
+- **Always use slippage protection** (Rule 6) regardless of sequencer ordering guarantees — sequencer trust assumptions may change
 
 ### Slippage Protection
 Mandatory parameters for DEX/swap operations:
@@ -83,7 +167,13 @@ function swap(
 ### Flash Loan Attack Surfaces
 - Oracle manipulation: use TWAP instead of spot price
 - Price impact: large single-block trades manipulating price
-- Protection: Chainlink oracle or multi-block TWAP, liquidity checks
+- Protection: Chainlink price feed (if available for the pair) or multi-block TWAP, liquidity checks
+
+### Oracle / Price Feed Guidance
+- **Chainlink on X Layer:** Limited availability — only major pairs (OKB/USD, ETH/USD, BTC/USD, USDT/USD). Check [Chainlink X Layer feeds](https://docs.chain.link/data-feeds/price-feeds/addresses?network=xlayer) before depending on a feed.
+- For pairs WITHOUT Chainlink feeds: use DEX TWAP (e.g., Uniswap V3 `observe()`) with multi-block averaging as fallback
+- Always validate feed freshness: `require(block.timestamp - updatedAt < MAX_STALENESS)`
+- Always check `answer > 0` and `answeredInRound >= roundId`
 
 ### ERC20 Approve Race Condition
 The `approve()` function is vulnerable to front-running — an attacker can spend the old allowance before the new one takes effect:
@@ -102,6 +192,7 @@ token.safeIncreaseAllowance(spender, amount); // OZ v4
 token.approve(spender, 0);
 token.approve(spender, newAmount);
 ```
+For new DEX/DeFi integrations, consider **Permit2** which eliminates the approve race entirely — see `contract-patterns.md` → Permit2 Approval Pattern.
 
 ### transfer() / send() 2300 Gas Limit
 `transfer()` and `send()` forward only 2300 gas — not enough for contracts with logic in `receive()`:
@@ -136,24 +227,55 @@ receive() external payable {
 ```
 
 ### Cross-Function Reentrancy
-CEI pattern protects a single function, but an attacker can re-enter through a **different** function that reads stale state:
+`nonReentrant` on one function does NOT protect other functions that share the same state:
 ```solidity
-// ❌ VULNERABLE: withdraw() follows CEI, but getBalance() reads stale state during callback
+// ❌ Vulnerable: withdraw() has nonReentrant, but transfer() does not
 function withdraw(uint256 amount) external nonReentrant {
     require(balances[msg.sender] >= amount);
-    (bool ok,) = msg.sender.call{value: amount}("");
-    // During callback, attacker calls getBalance() which still shows old balance
+    balances[msg.sender] -= amount;                          // Effect (CEI ✓)
+    (bool ok,) = msg.sender.call{value: amount}("");         // Interaction
+    require(ok);
+    // During callback, attacker calls transfer() which has NO nonReentrant
+}
+
+function transfer(address to, uint256 amount) external {
+    // No nonReentrant! Attacker re-enters here during withdraw callback
+    require(balances[msg.sender] >= amount);
     balances[msg.sender] -= amount;
+    balances[to] += amount;
 }
 ```
 Protection: use `nonReentrant` modifier on ALL public functions that read or write shared state, not just the one with the external call.
 
+### Multicall Reentrancy
+Batched calls via Multicall3 (`0xcA11bde05977b3631167028862bE2a173976CA11`) execute in a single transaction but bypass `nonReentrant` between calls in the batch:
+- `nonReentrant` won't protect between calls within the same Multicall batch
+- `msg.value` is shared across all calls in the batch — do NOT use `msg.value` in payable functions called via Multicall (double-spending risk)
+- If inheriting OpenZeppelin `Multicall`: mark payable functions `nonReentrant` AND validate `msg.value` is consumed exactly once
+
 ### ERC-4626 Vault Inflation Attack
 First depositor can manipulate share price by donating tokens directly to the vault:
+```
+Attack scenario:
+1. Attacker deposits 1 wei → gets 1 share
+2. Attacker donates 1,000,000 tokens directly to vault (transfer, not deposit)
+3. Victim deposits 999,000 tokens: shares = 999,000 * 1 / 1,000,000 = 0 (rounded down)
+4. Victim gets 0 shares — attacker redeems 1 share for all ~2M tokens
+```
 ```solidity
-// Attack: deposit 1 wei → donate 1M tokens → next depositor gets 0 shares
-// Protection: use OpenZeppelin ERC4626 which includes virtual offset
-// Or seed the vault with initial deposit during deployment
+// ✅ Protection: OpenZeppelin ERC4626 _decimalsOffset() adds virtual offset
+// to prevent rounding manipulation. Use OZ implementation directly:
+import "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
+
+contract MyVault is ERC4626 {
+    constructor(IERC20 asset) ERC4626(asset) ERC20("Vault", "vTKN") {}
+
+    // OZ default: _decimalsOffset() returns 0
+    // Override to add protection (recommended):
+    function _decimalsOffset() internal pure override returns (uint8) {
+        return 3; // Adds 1000 virtual shares — prevents inflation attack
+    }
+}
 ```
 
 ### Unchecked Return Values
@@ -180,14 +302,15 @@ Especially relevant for proxy/upgrade patterns on X Layer:
 - Proxy and implementation storage layouts MUST be identical — adding/reordering variables in upgrades breaks storage
 - Always call `_disableInitializers()` in implementation constructors to prevent direct initialization
 - Use OpenZeppelin's `StorageSlot` for unstructured storage patterns
+- For upgrade-safe storage, prefer **ERC-7201 namespaced storage** over `__gap` arrays — see `contract-patterns.md` → ERC-7201 Namespaced Storage
 
 ### Denial of Service (DoS) via Unbounded Loops
 Iterating over arrays that can grow without bound will eventually exceed the block gas limit:
 ```solidity
-// ❌ Dangerous: recipients array can grow until loop exceeds gas limit
+// ❌ Dangerous: unbounded loop + .transfer() (see Rule 13)
 function distributeRewards() external {
     for (uint256 i = 0; i < recipients.length; i++) {
-        payable(recipients[i]).transfer(rewards[i]);
+        payable(recipients[i]).transfer(rewards[i]); // Bad: unbounded + 2300 gas limit
     }
 }
 
@@ -231,6 +354,63 @@ function executeWithSignature(
 }
 ```
 Note: `block.chainid` returns 196 on X Layer mainnet, 1952 on testnet.
+
+### Input Validation Checklist
+Apply these checks at all public/external function boundaries:
+```solidity
+// Address validation
+require(recipient != address(0), "Zero address");
+require(recipient != address(this), "Self-transfer");
+
+// Amount validation
+require(amount > 0, "Zero amount");
+require(amount <= MAX_TRANSFER, "Exceeds limit");
+
+// Array bounds
+require(recipients.length > 0 && recipients.length <= MAX_BATCH, "Invalid batch size");
+require(recipients.length == amounts.length, "Length mismatch");
+
+// String/bytes length
+require(bytes(name).length > 0 && bytes(name).length <= 32, "Invalid name");
+```
+Rule of thumb: validate at system boundaries (user input, external calls), trust internal functions.
+
+### ERC-4337 Account Abstraction Security
+> X Layer supports account abstraction (`isAaTransaction` field in OKLink API). Smart account wallets introduce unique attack surfaces.
+
+**Key Threats:**
+1. **UserOp gas field manipulation:** Attacker submits UserOp with inflated `preVerificationGas` or `callGasLimit` to drain paymaster funds
+2. **Paymaster exploitation:** Malicious UserOp tricks paymaster into paying for operations it shouldn't sponsor
+3. **Signature validation bypass:** `validateUserOp` must verify signature + nonce atomically
+4. **Storage access rules:** `validateUserOp` can only access the account's own associated storage (ERC-7562 rules)
+
+**Protection patterns:**
+```solidity
+// In your smart account's validateUserOp:
+function validateUserOp(
+    PackedUserOperation calldata userOp,
+    bytes32 userOpHash,
+    uint256 missingAccountFunds
+) external returns (uint256 validationData) {
+    // 1. Verify signature (MUST check — never skip)
+    require(_validateSignature(userOp, userOpHash), "Invalid signature");
+
+    // 2. Validate nonce (prevents replay)
+    // EntryPoint manages nonces, but validate key-space if using 2D nonces
+
+    // 3. Pay prefund if needed
+    if (missingAccountFunds > 0) {
+        (bool ok,) = payable(msg.sender).call{value: missingAccountFunds}("");
+        // NOTE: Intentionally ignoring return value per ERC-4337 spec (exception to Rule 8).
+        // EntryPoint will revert entire UserOp if underfunded — checking `ok` here is unnecessary.
+        (ok); // Silence unused variable warning
+    }
+
+    return 0; // 0 = valid (no time restriction). Packed as (authorizer, validUntil, validAfter)
+}
+```
+- **Paymaster validation:** Always cap `maxCost` and validate the `paymasterAndData` field. Set spending limits per user/timeframe.
+- **Bundler trust:** Do not assume the bundler is honest — validate all UserOp fields on-chain.
 
 ---
 
@@ -312,7 +492,9 @@ if (!process.env.DEPLOYER_PRIVATE_KEY) {
 ## Additional Security Patterns
 
 ### Forced OKB Sending (selfdestruct bypass)
-`selfdestruct` (or `CREATE2` + `selfdestruct` in the same transaction post-EIP-6780) can force OKB into any contract, bypassing `receive()` guards:
+> **Post-EIP-6780 (Dencun):** `selfdestruct` on pre-existing contracts only sends balance — it does NOT destroy code or storage. The only case where `selfdestruct` fully destroys a contract is when called in the **same transaction** as `CREATE2` deployment. This `CREATE2` + `selfdestruct` in same tx still works as a full forced-send vector.
+
+`selfdestruct` (or `CREATE2` + `selfdestruct` in the same transaction) can force OKB into any contract, bypassing `receive()` guards:
 ```solidity
 // ❌ VULNERABLE: attacker uses selfdestruct to inflate address(this).balance
 contract Vault {
@@ -341,54 +523,53 @@ contract SafeVault {
 }
 ```
 
-### Weak Randomness on L2
+### Randomness (VRF)
+> **Chainlink VRF is NOT available on X Layer as of March 2026.** Do not use VRF code examples targeting X Layer — they will not work.
+
 On L2, the sequencer controls `block.timestamp`, `block.prevrandao`, and `blockhash`. These MUST NOT be used for randomness:
 ```solidity
 // ❌ VULNERABLE: sequencer can predict/manipulate all of these
 uint256 bad1 = uint256(keccak256(abi.encodePacked(block.timestamp)));
 uint256 bad2 = uint256(keccak256(abi.encodePacked(block.prevrandao)));
 uint256 bad3 = uint256(keccak256(abi.encodePacked(blockhash(block.number - 1))));
+```
 
-// ✅ Safe: Chainlink VRF v2.5
-import {VRFConsumerBaseV2Plus} from "@chainlink/contracts/src/v0.8/vrf/dev/VRFConsumerBaseV2Plus.sol";
-import {VRFV2PlusClient} from "@chainlink/contracts/src/v0.8/vrf/dev/libraries/VRFV2PlusClient.sol";
+Use **commit-reveal** as the primary on-chain randomness pattern:
+```solidity
+// Phase 1: Commit (user submits hash)
+mapping(address => bytes32) public commitments;
+mapping(address => uint256) public commitBlock;
 
-contract RandomLottery is VRFConsumerBaseV2Plus {
-    uint256 private s_subscriptionId;
-    bytes32 private s_keyHash;
-    mapping(uint256 => address) private s_requestToSender;
+function commit(bytes32 hash) external {
+    commitments[msg.sender] = hash;
+    commitBlock[msg.sender] = block.number;
+}
 
-    constructor(address vrfCoordinator, uint256 subId, bytes32 keyHash)
-        VRFConsumerBaseV2Plus(vrfCoordinator)
-    {
-        s_subscriptionId = subId;
-        s_keyHash = keyHash;
-    }
+// Phase 2: Reveal (after N blocks, user reveals secret)
+function reveal(bytes32 secret) external {
+    require(commitments[msg.sender] == keccak256(abi.encodePacked(secret)), "Invalid reveal");
+    require(block.number > commitBlock[msg.sender] + REVEAL_DELAY, "Too early");
+    require(block.number <= commitBlock[msg.sender] + REVEAL_DEADLINE, "Too late");
 
-    function requestRandom() external returns (uint256 requestId) {
-        requestId = s_vrfCoordinator.requestRandomWords(
-            VRFV2PlusClient.RandomWordsRequest({
-                keyHash: s_keyHash,
-                subId: s_subscriptionId,
-                requestConfirmations: 3,
-                callbackGasLimit: 100_000,
-                numWords: 1,
-                extraArgs: VRFV2PlusClient._argsToBytes(
-                    VRFV2PlusClient.ExtraArgsV1({nativePayment: false})
-                )
-            })
-        );
-        s_requestToSender[requestId] = msg.sender;
-    }
+    // Combine user secret with future blockhash for randomness
+    uint256 random = uint256(keccak256(abi.encodePacked(
+        secret,
+        blockhash(commitBlock[msg.sender] + REVEAL_DELAY)
+    )));
 
-    function fulfillRandomWords(uint256 requestId, uint256[] calldata randomWords) internal override {
-        address winner = s_requestToSender[requestId];
-        uint256 result = randomWords[0]; // Truly random
-        // ... use result
-    }
+    delete commitments[msg.sender];
+    // Use `random` ...
 }
 ```
-> **Note:** Check Chainlink's official documentation for VRF coordinator addresses on X Layer. If VRF is not yet available on X Layer, use commit-reveal pattern as fallback.
+**Limitations:** `blockhash()` only works for the last 256 blocks. Set `REVEAL_DELAY` and `REVEAL_DEADLINE` accordingly.
+
+> **⚠ VRF Import Guidance — Future Reference Only.** VRF is NOT available on X Layer. Do NOT import these for X Layer deployments. When VRF becomes available, use stable import paths (NOT `/dev/`):
+> ```solidity
+> // Correct (stable):
+> import {VRFConsumerBaseV2Plus} from "@chainlink/contracts/src/v0.8/vrf/VRFConsumerBaseV2Plus.sol";
+> // Wrong (development — do NOT use):
+> // import {VRFConsumerBaseV2Plus} from "@chainlink/contracts/src/v0.8/vrf/dev/VRFConsumerBaseV2Plus.sol";
+> ```
 
 ### On-Chain Data Privacy
 `private` variables are NOT hidden — anyone can read them via `eth_getStorageAt`:
@@ -482,7 +663,11 @@ contract PriceConsumer {
     }
 }
 
-// For L2: also check sequencer uptime feed (if available on X Layer)
+// L2 Sequencer Uptime Feed
+// Chainlink L2 Sequencer Uptime Feed: NOT confirmed available on X Layer (March 2026).
+// Check https://docs.chain.link/data-feeds/l2-sequencer-feeds for updates.
+// When available, add this check before using any Chainlink price feed:
+//
 // AggregatorV3Interface sequencerUptimeFeed = AggregatorV3Interface(SEQUENCER_FEED_ADDR);
 // (, int256 answer,, uint256 startedAt,) = sequencerUptimeFeed.latestRoundData();
 // bool isSequencerUp = answer == 0;

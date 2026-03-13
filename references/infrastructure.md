@@ -127,10 +127,10 @@ xlayer-reth node --authrpc.jwtsecret=/data/xlayer-mainnet/jwt.hex \
 
 ## WebSocket Subscriptions
 
-- Endpoint: `wss://rpc.xlayer.tech`
+- Endpoint: `wss://xlayerws.okx.com` (primary) or `wss://ws.xlayer.tech` (alternative)
 - Supported events: `block`, `pending`, `logs` (contract events)
-- ethers v6: `new ethers.WebSocketProvider("wss://rpc.xlayer.tech")`
-- viem: `createPublicClient({ transport: webSocket("wss://rpc.xlayer.tech") })`
+- ethers v6: `new ethers.WebSocketProvider("wss://xlayerws.okx.com")`
+- viem: `createPublicClient({ transport: webSocket("wss://xlayerws.okx.com") })`
 
 ### Mandatory Rules
 1. **Automatic reconnection** — WS connections can drop at any time; implement reconnect with backoff
