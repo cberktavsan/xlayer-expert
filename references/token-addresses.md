@@ -2,10 +2,10 @@
 
 ## Mainnet
 
-| Token  | Address                                     | Decimals |
-|--------|---------------------------------------------|----------|
-| USDT   | 0x1E4a5963aBFD975d8c9021ce480b42188849D41d  | 6        |
-| USDT0  | 0x779Ded0c9e1022225f8E0630b35a9b54bE713736  | 6        |
+| Token    | Address                                     | Decimals | Note |
+|----------|---------------------------------------------|----------|------|
+| **USDT0** | 0x779Ded0c9e1022225f8E0630b35a9b54bE713736 | 6        | Primary USDT — Stargate/LayerZero native |
+| USDT     | 0x1E4a5963aBFD975d8c9021ce480b42188849D41d  | 6        | Legacy/bridged — prefer USDT0 for new integrations |
 | WOKB   | 0xe538905cf8410324e03A5A23C1c177a474D59b2b  | 18       |
 | WETH   | 0x5A77f1443D16ee5761d310e38b62f77f726bC71c  | 18       |
 | USDC   | 0x74b7F16337b8972027F6196A17a631aC6dE26d22  | 6        |

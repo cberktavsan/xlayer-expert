@@ -10,7 +10,8 @@
 - RPC: https://rpc.xlayer.tech
 - RPC (alt): https://xlayerrpc.okx.com
 - Flashblocks RPC: https://rpc.xlayer.tech/flashblocks
-- WSS: wss://rpc.xlayer.tech
+- WSS: wss://xlayerws.okx.com
+- WSS (alt): wss://ws.xlayer.tech
 - Explorer: https://www.okx.com/web3/explorer/xlayer
 - Gas Token: OKB (native)
 
@@ -39,8 +40,7 @@
 - Details → `gas-optimization.md`
 
 ## WebSocket Subscriptions
-- WSS endpoint: `wss://rpc.xlayer.tech`
-- Alternative WSS: `wss://xlayerws.okx.com`, `wss://ws.xlayer.tech`
+- WSS endpoint: `wss://xlayerws.okx.com` (primary) or `wss://ws.xlayer.tech` (alternative)
 - Supported events: `block`, `pending`, `logs`
 - Automatic reconnection is mandatory
 - Details → `infrastructure.md`

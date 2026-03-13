@@ -108,7 +108,7 @@ async function getBlock(blockNumber: number, provider: ethers.JsonRpcProvider) {
 ### DIFFICULTY / PREVRANDAO
 - Ethereum (post-merge): RANDAO value (pseudo-random)
 - X Layer: May return a fixed value or 0
-- Use Chainlink VRF for on-chain randomness
+- Chainlink VRF is NOT available on X Layer — use commit-reveal for on-chain randomness (see `security.md` → Randomness)
 
 ### Block Finality
 - Ethereum: ~15 minutes (64 slots)

@@ -89,7 +89,7 @@ xlayer-reth node \
 // viem
 const wsClient = createPublicClient({
     chain: xlayer,
-    transport: webSocket("wss://rpc.xlayer.tech"),
+    transport: webSocket("wss://xlayerws.okx.com"),
 });
 
 // Get flashblock state via "pending" block tag

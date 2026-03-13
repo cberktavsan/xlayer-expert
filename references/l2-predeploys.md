@@ -15,6 +15,8 @@
 
 ## L1 Bridge Contracts (Ethereum Mainnet)
 
+> **Verification note:** These addresses were sourced from X Layer documentation. Before relying on them in production, verify on [Etherscan](https://etherscan.io) by checking that each address has the expected contract name and is associated with X Layer / OKX deployment.
+
 | Contract               | Address                                     |
 |------------------------|---------------------------------------------|
 | OptimismPortal         | 0x64057ad1DdAc804d0D26A7275b193D9DACa19993  |

@@ -51,12 +51,11 @@ These rules apply to ALL Solidity code written for X Layer. Violating any of the
    function deposit() external payable { totalDeposited += msg.value; }
    ```
 
-16. **No on-chain randomness** — On L2, the sequencer controls `block.timestamp`, `block.prevrandao`, and `blockhash`. Never use these for randomness in gaming, lottery, or NFT minting. Use Chainlink VRF or commit-reveal.
+16. **No on-chain randomness** — On L2, the sequencer controls `block.timestamp`, `block.prevrandao`, and `blockhash`. Never use these for randomness. **Chainlink VRF is NOT available on X Layer** — use commit-reveal pattern instead. See `security.md` → Randomness.
    ```solidity
    // ❌ Vulnerable: sequencer can predict/manipulate
    uint256 random = uint256(keccak256(abi.encodePacked(block.timestamp, block.prevrandao)));
-   // ✅ Safe: Chainlink VRF v2.5
-   uint256 requestId = s_vrfCoordinator.requestRandomWords(VRFV2PlusClient.RandomWordsRequest({...}));
+   // ✅ Safe: commit-reveal pattern (see security.md for full example)
    ```
 
 17. **Private != secret** — `private` variables are readable via `eth_getStorageAt`. Never store passwords, secret keys, or hidden game state in contract storage. Use commit-reveal or off-chain computation for sensitive data.
@@ -68,6 +67,14 @@ These rules apply to ALL Solidity code written for X Layer. Violating any of the
    // ✅ Safe: OpenZeppelin ECDSA rejects high-s values
    address signer = ECDSA.recover(hash, signature);
    ```
+
+19. **Transient storage reentrancy** — EIP-1153 `TSTORE`/`TLOAD` costs only 100 gas — reentrancy is possible even within the 2300 gas stipend. Use `ReentrancyGuardTransient` (OZ v5.1+) for new contracts.
+
+20. **Input validation** — Always validate: `address != address(0)`, `amount > 0`, array length bounds, and length parity for parallel arrays. Validate at system boundaries.
+
+21. **Solidity ≥0.8.29** — Use 0.8.29+ as minimum compiler version. Avoid `via_ir = true` with transient storage due to IR pipeline bug in 0.8.28–0.8.33.
+
+22. **EIP-7702 awareness** — `tx.origin == msg.sender` is no longer a reliable EOA check post-Pectra. Validate nonce, gas, and value in all signature-verified operations. See `security.md` → EIP-7702.
 
 ## Post-Write Security Check
 
@@ -90,6 +97,10 @@ After writing any Solidity code, verify ALL Golden Rules before presenting it:
 - [ ] No on-chain randomness (`block.timestamp`, `prevrandao`)? (Rule 16)
 - [ ] No secrets stored in `private` variables? (Rule 17)
 - [ ] Using `ECDSA.recover()` instead of raw `ecrecover`? (Rule 18)
+- [ ] Transient storage + reentrancy considered? (Rule 19)
+- [ ] Input validation at boundaries? (Rule 20)
+- [ ] Solidity version ≥0.8.29? (Rule 21)
+- [ ] No `tx.origin == msg.sender` as sole EOA check? (Rule 22)
 
 ## Conditional Pattern Triggers
 
@@ -98,7 +109,7 @@ When you detect these patterns in user code, automatically apply the correspondi
 | Pattern Detected | Auto-Check |
 |-----------------|------------|
 | `address(this).balance` | Warn about forced OKB sending (Rule 15) |
-| `block.timestamp` or `block.prevrandao` used for randomness | Suggest Chainlink VRF (Rule 16) |
+| `block.timestamp` or `block.prevrandao` used for randomness | Suggest commit-reveal pattern (Rule 16) — VRF not available |
 | `private` variable storing password/secret/key | Warn about on-chain visibility (Rule 17) |
 | `ecrecover(` | Suggest OpenZeppelin ECDSA (Rule 18) |
 | `AggregatorV3Interface` or price feed | Check staleness + sequencer uptime |
@@ -106,6 +117,8 @@ When you detect these patterns in user code, automatically apply the correspondi
 | `receive() external payable {}` (empty) | Reject — require event or revert (Rule 14) |
 | `approve(` without SafeERC20 | Suggest forceApprove (Rule 9) |
 | Unbounded `for` loop over storage array | Suggest pull pattern (Rule 11) |
+| `tx.origin == msg.sender` as sole check | Warn about EIP-7702 bypass (Rule 22) |
+| `TSTORE`/`TLOAD` without reentrancy guard | Warn about transient storage reentrancy (Rule 19) |
 
 ## When to Trigger
 
