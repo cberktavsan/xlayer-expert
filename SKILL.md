@@ -72,7 +72,7 @@ These rules apply to ALL Solidity code written for X Layer. Violating any of the
 
 20. **Input validation** — Always validate: `address != address(0)`, `amount > 0`, array length bounds, and length parity for parallel arrays. Validate at system boundaries.
 
-21. **Solidity ≥0.8.29** — Use 0.8.29+ as minimum compiler version. Avoid `via_ir = true` with transient storage due to IR pipeline bug in 0.8.28–0.8.33.
+21. **Solidity ≥0.8.34** — Use 0.8.34+ as minimum compiler version. Versions 0.8.28–0.8.33 have the TSTORE Poison bug (IR pipeline corrupts transient storage cleanup). 0.8.34 fixes this.
 
 22. **EIP-7702 awareness** — `tx.origin == msg.sender` is no longer a reliable EOA check post-Pectra. Validate nonce, gas, and value in all signature-verified operations. See `security.md` → EIP-7702.
 
@@ -99,7 +99,7 @@ After writing any Solidity code, verify ALL Golden Rules before presenting it:
 - [ ] Using `ECDSA.recover()` instead of raw `ecrecover`? (Rule 18)
 - [ ] Transient storage + reentrancy considered? (Rule 19)
 - [ ] Input validation at boundaries? (Rule 20)
-- [ ] Solidity version ≥0.8.29? (Rule 21)
+- [ ] Solidity version ≥0.8.34? (Rule 21)
 - [ ] No `tx.origin == msg.sender` as sole EOA check? (Rule 22)
 
 ## Conditional Pattern Triggers

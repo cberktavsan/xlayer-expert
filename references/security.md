@@ -15,8 +15,8 @@ function withdraw(uint256 amount) external {
 
 // ❌ Wrong: Interaction before Effect — reentrancy vulnerability
 function withdraw(uint256 amount) external {
-    require(balances[msg.sender] >= amount);
-    (bool ok, ) = msg.sender.call{value: amount}("");
+    require(balances[msg.sender] >= amount, "Insufficient");
+    (bool ok, ) = msg.sender.call{value: amount}("");  // External call BEFORE state update!
     balances[msg.sender] -= amount;
 }
 ```
@@ -125,10 +125,29 @@ for (uint256 i = 0; i < arr.length;) {
 }
 ```
 
+#### Downcast Safety
+Solidity 0.8+ checks arithmetic overflow/underflow, but **downcasting silently truncates** without reverting:
+```solidity
+// ❌ VULNERABLE: silently truncates — no revert on overflow
+uint256 big = type(uint256).max;
+uint128 small = uint128(big); // Silently truncated to type(uint128).max
+
+// ✅ Safe: use OpenZeppelin SafeCast — reverts on overflow
+import "@openzeppelin/contracts/utils/math/SafeCast.sol";
+using SafeCast for uint256;
+uint128 safe = big.toUint128(); // Reverts: "SafeCast: value doesn't fit in 128 bits"
+```
+
 ### Front-running Protection
 - Commit-reveal pattern: first commit hash, then reveal value
 - Private mempool: via Flashblocks or dedicated RPC
 - Time-based nonce or deadline parameters
+
+#### MEV on X Layer
+- **Single sequencer (OKX):** No public mempool MEV like Ethereum — users cannot run MEV bots targeting the mempool
+- **Flashblocks:** Create a ~200ms visibility window before finalization — see `flashblocks.md` for reorg risks
+- **Sequencer ordering:** The sequencer determines transaction ordering; no PBS (proposer-builder separation) yet
+- **Always use slippage protection** (Rule 6) regardless of sequencer ordering guarantees — sequencer trust assumptions may change
 
 ### Slippage Protection
 Mandatory parameters for DEX/swap operations:
@@ -173,6 +192,7 @@ token.safeIncreaseAllowance(spender, amount); // OZ v4
 token.approve(spender, 0);
 token.approve(spender, newAmount);
 ```
+For new DEX/DeFi integrations, consider **Permit2** which eliminates the approve race entirely — see `contract-patterns.md` → Permit2 Approval Pattern.
 
 ### transfer() / send() 2300 Gas Limit
 `transfer()` and `send()` forward only 2300 gas — not enough for contracts with logic in `receive()`:
@@ -227,12 +247,35 @@ function transfer(address to, uint256 amount) external {
 ```
 Protection: use `nonReentrant` modifier on ALL public functions that read or write shared state, not just the one with the external call.
 
+### Multicall Reentrancy
+Batched calls via Multicall3 (`0xcA11bde05977b3631167028862bE2a173976CA11`) execute in a single transaction but bypass `nonReentrant` between calls in the batch:
+- `nonReentrant` won't protect between calls within the same Multicall batch
+- `msg.value` is shared across all calls in the batch — do NOT use `msg.value` in payable functions called via Multicall (double-spending risk)
+- If inheriting OpenZeppelin `Multicall`: mark payable functions `nonReentrant` AND validate `msg.value` is consumed exactly once
+
 ### ERC-4626 Vault Inflation Attack
 First depositor can manipulate share price by donating tokens directly to the vault:
+```
+Attack scenario:
+1. Attacker deposits 1 wei → gets 1 share
+2. Attacker donates 1,000,000 tokens directly to vault (transfer, not deposit)
+3. Victim deposits 999,000 tokens: shares = 999,000 * 1 / 1,000,000 = 0 (rounded down)
+4. Victim gets 0 shares — attacker redeems 1 share for all ~2M tokens
+```
 ```solidity
-// Attack: deposit 1 wei → donate 1M tokens → next depositor gets 0 shares
-// Protection: use OpenZeppelin ERC4626 which includes virtual offset
-// Or seed the vault with initial deposit during deployment
+// ✅ Protection: OpenZeppelin ERC4626 _decimalsOffset() adds virtual offset
+// to prevent rounding manipulation. Use OZ implementation directly:
+import "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
+
+contract MyVault is ERC4626 {
+    constructor(IERC20 asset) ERC4626(asset) ERC20("Vault", "vTKN") {}
+
+    // OZ default: _decimalsOffset() returns 0
+    // Override to add protection (recommended):
+    function _decimalsOffset() internal pure override returns (uint8) {
+        return 3; // Adds 1000 virtual shares — prevents inflation attack
+    }
+}
 ```
 
 ### Unchecked Return Values
@@ -259,6 +302,7 @@ Especially relevant for proxy/upgrade patterns on X Layer:
 - Proxy and implementation storage layouts MUST be identical — adding/reordering variables in upgrades breaks storage
 - Always call `_disableInitializers()` in implementation constructors to prevent direct initialization
 - Use OpenZeppelin's `StorageSlot` for unstructured storage patterns
+- For upgrade-safe storage, prefer **ERC-7201 namespaced storage** over `__gap` arrays — see `contract-patterns.md` → ERC-7201 Namespaced Storage
 
 ### Denial of Service (DoS) via Unbounded Loops
 Iterating over arrays that can grow without bound will eventually exceed the block gas limit:
@@ -357,7 +401,9 @@ function validateUserOp(
     // 3. Pay prefund if needed
     if (missingAccountFunds > 0) {
         (bool ok,) = payable(msg.sender).call{value: missingAccountFunds}("");
-        // Ignore return value — EntryPoint will revert if underfunded
+        // NOTE: Intentionally ignoring return value per ERC-4337 spec (exception to Rule 8).
+        // EntryPoint will revert entire UserOp if underfunded — checking `ok` here is unnecessary.
+        (ok); // Silence unused variable warning
     }
 
     return 0; // 0 = valid (no time restriction). Packed as (authorizer, validUntil, validAfter)
@@ -446,7 +492,9 @@ if (!process.env.DEPLOYER_PRIVATE_KEY) {
 ## Additional Security Patterns
 
 ### Forced OKB Sending (selfdestruct bypass)
-`selfdestruct` (or `CREATE2` + `selfdestruct` in the same transaction post-EIP-6780) can force OKB into any contract, bypassing `receive()` guards:
+> **Post-EIP-6780 (Dencun):** `selfdestruct` on pre-existing contracts only sends balance — it does NOT destroy code or storage. The only case where `selfdestruct` fully destroys a contract is when called in the **same transaction** as `CREATE2` deployment. This `CREATE2` + `selfdestruct` in same tx still works as a full forced-send vector.
+
+`selfdestruct` (or `CREATE2` + `selfdestruct` in the same transaction) can force OKB into any contract, bypassing `receive()` guards:
 ```solidity
 // ❌ VULNERABLE: attacker uses selfdestruct to inflate address(this).balance
 contract Vault {
@@ -515,13 +563,13 @@ function reveal(bytes32 secret) external {
 ```
 **Limitations:** `blockhash()` only works for the last 256 blocks. Set `REVEAL_DELAY` and `REVEAL_DEADLINE` accordingly.
 
-If Chainlink VRF becomes available on X Layer in the future, use stable import paths (NOT `/dev/`):
-```solidity
-// Correct (stable):
-import {VRFConsumerBaseV2Plus} from "@chainlink/contracts/src/v0.8/vrf/VRFConsumerBaseV2Plus.sol";
-// Wrong (development — do NOT use):
-// import {VRFConsumerBaseV2Plus} from "@chainlink/contracts/src/v0.8/vrf/dev/VRFConsumerBaseV2Plus.sol";
-```
+> **⚠ VRF Import Guidance — Future Reference Only.** VRF is NOT available on X Layer. Do NOT import these for X Layer deployments. When VRF becomes available, use stable import paths (NOT `/dev/`):
+> ```solidity
+> // Correct (stable):
+> import {VRFConsumerBaseV2Plus} from "@chainlink/contracts/src/v0.8/vrf/VRFConsumerBaseV2Plus.sol";
+> // Wrong (development — do NOT use):
+> // import {VRFConsumerBaseV2Plus} from "@chainlink/contracts/src/v0.8/vrf/dev/VRFConsumerBaseV2Plus.sol";
+> ```
 
 ### On-Chain Data Privacy
 `private` variables are NOT hidden — anyone can read them via `eth_getStorageAt`:
@@ -615,7 +663,11 @@ contract PriceConsumer {
     }
 }
 
-// For L2: also check sequencer uptime feed (if available on X Layer)
+// L2 Sequencer Uptime Feed
+// Chainlink L2 Sequencer Uptime Feed: NOT confirmed available on X Layer (March 2026).
+// Check https://docs.chain.link/data-feeds/l2-sequencer-feeds for updates.
+// When available, add this check before using any Chainlink price feed:
+//
 // AggregatorV3Interface sequencerUptimeFeed = AggregatorV3Interface(SEQUENCER_FEED_ADDR);
 // (, int256 answer,, uint256 startedAt,) = sequencerUptimeFeed.latestRoundData();
 // bool isSequencerUp = answer == 0;

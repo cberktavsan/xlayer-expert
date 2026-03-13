@@ -8,7 +8,7 @@ import "@nomicfoundation/hardhat-toolbox";
 import '@okxweb3/hardhat-explorer-verify';
 
 const config: HardhatUserConfig = {
-  solidity: "0.8.29",
+  solidity: "0.8.34",
   paths: { sources: "./contracts" },
   networks: {
     "xlayer-testnet": {
@@ -69,7 +69,7 @@ Testnet (chainId 1952 — see `network-config.md` for chainId notes):
 src = "contracts"
 out = "out"
 libs = ["node_modules"]
-solc_version = "0.8.29"
+solc_version = "0.8.34"
 optimizer = true
 optimizer_runs = 200
 evm_version = "cancun"
@@ -147,7 +147,7 @@ contract MyContractV1 is UUPSUpgradeable, OwnableUpgradeable {
 Without `__gap`, adding variables to a base contract shifts storage in child contracts, corrupting data.
 
 ### Solidity Compiler Warning
-> **IR Pipeline Bug (Feb 2026):** Solidity versions 0.8.28–0.8.33 have a critical bug in the IR (Yul) pipeline affecting transient storage cleanup. If you use `via_ir = true` with transient storage (`TSTORE`/`TLOAD`), use 0.8.29+ with `via_ir = false` (default) or wait for the patched compiler release. Standard (legacy) pipeline is unaffected.
+> **TSTORE Poison Bug:** Solidity 0.8.28–0.8.33 have a critical bug in the IR (Yul) pipeline that corrupts transient storage cleanup (`TSTORE`/`TLOAD`). **Use 0.8.34+** which fixes this bug. Do not use `via_ir = true` with any version in the 0.8.28–0.8.33 range.
 
 ### ERC-7201 Namespaced Storage (Recommended)
 OpenZeppelin v5 best practice for proxy/upgrade safety. Replaces error-prone `__gap` arrays with deterministic storage locations:
@@ -180,6 +180,18 @@ contract MyContractV1 is UUPSUpgradeable {
 - OpenZeppelin `@custom:storage-location` annotation enables automated tooling verification
 - Works alongside existing `__gap` patterns if migrating incrementally
 
+### Import Path: `contracts` vs `contracts-upgradeable`
+- **Non-proxy contracts:** Use `@openzeppelin/contracts/...` (standard library)
+- **Proxy/upgradeable contracts:** Use `@openzeppelin/contracts-upgradeable/...` (initializable variants)
+- Mixing them causes subtle bugs: standard contracts have constructors that don't run behind proxies
+```solidity
+// ❌ Wrong: standard Ownable in an upgradeable contract — constructor won't run
+import "@openzeppelin/contracts/access/Ownable.sol";
+
+// ✅ Correct: upgradeable variant with initializer
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+```
+
 ### Critical Rules
 - `constructor` must always call `_disableInitializers()`
 - `initialize` function must use `initializer` modifier
@@ -202,7 +214,7 @@ contract MyContractV1 is UUPSUpgradeable {
 ```solidity
 // contracts/MyNFT.sol
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.29;
+pragma solidity ^0.8.34;
 
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
@@ -298,4 +310,4 @@ contract MyDEX {
 - Built-in nonce and deadline enforcement
 - Batch permits for multi-token operations
 
-**Note:** Check if Permit2 is deployed on X Layer before integrating. If not deployed, you can deploy the canonical version yourself (deterministic CREATE2 address).
+**Permit2 on X Layer:** Canonical Permit2 address is `0x000000000022D473030F116dDEE9F6B43aC78BA3` (deterministic CREATE2 — same on all EVM chains). Verify deployment: call `eth_getCode` at this address. If empty (not deployed), deploy from [github.com/Uniswap/permit2](https://github.com/Uniswap/permit2) using the canonical CREATE2 deployer.

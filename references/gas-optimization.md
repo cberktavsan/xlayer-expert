@@ -85,7 +85,7 @@ Reduction techniques:
 ```json
 {
   "solidity": {
-    "version": "0.8.29",
+    "version": "0.8.34",
     "settings": {
       "optimizer": {
         "enabled": true,
