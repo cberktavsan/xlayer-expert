@@ -2,7 +2,7 @@
 
 An AI coding assistant skill that provides deep expertise for building on [X Layer](https://www.okx.com/xlayer) — OKX's Layer 2 blockchain built on OP Stack.
 
-Works with **Claude Code**, **Cursor**, **Windsurf**, **Codex CLI**, **Gemini CLI**, and any AI coding tool that supports markdown-based context files.
+Works with **Claude Code**, **Claude Desktop**, **Cursor**, **Windsurf**, **Codex CLI**, **Gemini CLI**, and any AI coding tool that supports markdown-based context files.
 
 ## What it does
 
@@ -44,6 +44,19 @@ Copy `SKILL.md` and `references/` into your project root, or add them to the too
 cp SKILL.md your-project/.cursorrules
 # Or reference the files via Cursor Settings → Rules
 ```
+
+### Claude Desktop
+
+Add the reference files as Project Knowledge:
+
+1. Open **Claude Desktop** → create or open a **Project**
+2. Click **Project Knowledge** (or the 📎 icon in the project settings)
+3. Upload these files:
+   - `SKILL.md` (main skill file with Golden Rules)
+   - All files from `references/` folder (`security.md`, `contract-patterns.md`, etc.)
+4. Every conversation in that project will now have X Layer expertise
+
+> **Tip:** For the best experience, upload all 12 files. If you hit the file limit, prioritize `SKILL.md` + `security.md` + `contract-patterns.md` — these cover the most critical security and deployment patterns.
 
 ### Codex CLI / Gemini CLI
 
